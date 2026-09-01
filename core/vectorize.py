@@ -15,6 +15,7 @@ import math
 
 import numpy as np
 from shapely.geometry import LineString
+from skimage.draw import line as _draw_line
 from skimage.morphology import remove_small_objects, skeletonize
 
 _NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
@@ -94,6 +95,18 @@ def mask_to_paths(mask):
             paths.append(path)
 
     return paths
+
+
+def paths_to_mask(paths, shape):
+    """Rasterize pixel paths back into a mask. Only used for the overlay picture."""
+    mask = np.zeros(shape, bool)
+    h, w = shape
+    for path in paths:
+        for (r0, c0), (r1, c1) in zip(path, path[1:]):
+            rr, cc = _draw_line(int(r0), int(c0), int(r1), int(c1))
+            keep = (rr >= 0) & (rr < h) & (cc >= 0) & (cc < w)
+            mask[rr[keep], cc[keep]] = True
+    return mask
 
 
 def paths_to_geojson(paths, transform, crs, center_lat,

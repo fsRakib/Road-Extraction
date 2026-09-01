@@ -107,9 +107,9 @@ def run(name, model_name):
     if model_name not in models:
         sys.exit(f"Unknown model '{model_name}'. Available: {', '.join(sorted(models))}")
 
-    from extract import _predict_full
+    from core.tiling import tiled_predict
     model = models[model_name]().load()
-    prob = _predict_full(model, image)
+    prob = tiled_predict(model, image, config.PATCH_PX, config.OVERLAP_PX)
     pred = prob_to_mask(prob, config.THRESHOLD, config.MIN_ROAD_PX)
 
     recall, precision, f1 = score(pred, truth, config.MATCH_SLACK_PX)

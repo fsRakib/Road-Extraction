@@ -20,27 +20,10 @@ import rasterio
 import config
 from core.geo import raster_center_latlon
 from core.registry import discover
-from core.vectorize import mask_to_paths, paths_to_geojson, prob_to_mask, save_geojson
+from core.tiling import tiled_predict
+from core.vectorize import (mask_to_paths, paths_to_geojson, paths_to_mask,
+                            prob_to_mask, save_geojson)
 from core.viz import save_mask, save_overlay
-
-
-def _predict_full(model, image):
-    """Run the model patch by patch and stitch the probabilities back together."""
-    h, w = image.shape[:2]
-    p = config.PATCH_PX
-    prob = np.zeros((h, w), np.float32)
-
-    for r in range(0, h, p):
-        for c in range(0, w, p):
-            tile = image[r:r + p, c:c + p]
-            th, tw = tile.shape[:2]
-            if (th, tw) != (p, p):                     # pad the edge patches
-                pad = np.zeros((p, p, 3), tile.dtype)
-                pad[:th, :tw] = tile
-                tile = pad
-            out = model.predict(tile)
-            prob[r:r + th, c:c + tw] = out[:th, :tw]
-    return prob
 
 
 def run(name, model_name):
@@ -60,10 +43,15 @@ def run(name, model_name):
     print(f"[extract] {name}  model={model_name}")
     t0 = time.time()
     model = models[model_name]().load()
-    prob = _predict_full(model, image)
 
-    mask = prob_to_mask(prob, config.THRESHOLD, config.MIN_ROAD_PX)
-    paths = mask_to_paths(mask)
+    if getattr(model, "outputs", "mask") == "graph":
+        # the model returns road lines directly - no thresholding needed
+        paths = model.predict_graph(image)
+        mask = paths_to_mask(paths, image.shape[:2])
+    else:
+        prob = tiled_predict(model, image, config.PATCH_PX, config.OVERLAP_PX)
+        mask = prob_to_mask(prob, config.THRESHOLD, config.MIN_ROAD_PX)
+        paths = mask_to_paths(mask)
     fc = paths_to_geojson(paths, transform, crs, lat,
                           simplify_m=config.SIMPLIFY_M,
                           props={"model": model_name, "aoi": name})

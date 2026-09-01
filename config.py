@@ -18,6 +18,7 @@ WEIGHTS     = ROOT / "models" / "weights"  # put .pth files here
 ZOOM     = 18     # ~0.55 m/pixel in Bangladesh -> matches DeepGlobe/SpaceNet training data
 SIZE_PX  = 2048   # downloaded image is 2048x2048  (~1.1 km x 1.1 km)
 PATCH_PX = 512    # models see 512x512 patches (16 patches per image)
+OVERLAP_PX = 96   # patches overlap by this much; blended so seams disappear
 
 BASEMAP = ("https://services.arcgisonline.com/ArcGIS/rest/services/"
            "World_Imagery/MapServer/tile/{z}/{y}/{x}")

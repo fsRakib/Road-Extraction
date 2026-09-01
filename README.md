@@ -70,6 +70,40 @@ alignment - drag the `.tif` and `.geojson` in together.
 > and gets reverted. A human accepts each road. Look at Meta's **RapiD** editor -
 > it is iD built exactly for this workflow.
 
+## Free accuracy improvements (no training)
+
+Two changes that make every mask model more accurate, for zero extra data:
+
+- **Overlapping tiles** (`core/tiling.py`) - patches overlap by
+  `OVERLAP_PX` (96px) and blend with a smooth window, so a road crossing a
+  patch boundary no longer breaks. Applies to every model automatically.
+- **Test-time augmentation** (`dlinknet.tta = True` in `models/dlinknet.py`) -
+  runs each patch flipped 4 ways and averages the result. Slower (~45s vs
+  6s per image on this CPU) but more accurate; the model itself is
+  untouched, still zero-shot pretrained.
+
+## Models available now
+
+```bash
+uv run extract.py list
+```
+
+| name | what it is | status |
+|---|---|---|
+| `baseline` | Frangi ridge filter, no weights | works, weak - it's the floor |
+| `dlinknet` | D-LinkNet34, DeepGlobe winner | **works well**, ~7s/image on CPU - use this |
+| `unet` | U-Net resnet34, needs your own weights | template only, no weights included |
+| `samroad` | SAM ViT-B, outputs a connected graph | needs `sam_road` repo + GPU-ish time |
+| `rngdet` | RNGDet++, transformer graph tracer | needs GPU, hours on CPU - skip for now |
+
+`dlinknet` is the one to actually use day to day. Its weights
+(`models/weights/dlinknet34_deepglobe.th`) are already installed and it
+runs fine on this CPU-only laptop.
+
+`samroad` and `rngdet` output road **graphs** directly instead of a pixel
+mask - see `models/samroad.py` and `models/rngdet.py` for the one-time repo
+clone + checkpoint download each needs. Both are heavy; try `dlinknet` first.
+
 ## Adding a model
 
 Create one file in `models/`. Nothing else changes.

@@ -1,3 +1,37 @@
-/.venv
-/__pycache__
-/outputs
+/.venv/
+/__pycache__/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.ipynb_checkpoints/
+
+# Generated project outputs
+/outputs/
+/reports/
+
+# Local data and downloads
+/data/
+!/data/README*
+
+# Large local source files
+*.osm.pbf
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+*.geojson
+
+# Model weights and checkpoints
+/models/weights/
+*.pth
+*.ckpt
+*.pt
+*.h5
+
+# Common editor and OS files
+.DS_Store
+Thumbs.db
+
+# Local notes / research files
+Elicit - Papers for pretrained road extraction and topology-aware mapping.csv

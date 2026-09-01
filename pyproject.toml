@@ -18,7 +18,18 @@ dependencies = [
 # uv sync --extra deep        -> PyTorch models
 [project.optional-dependencies]
 validate = ["geopandas", "pyrosm"]
-deep = ["torch", "segmentation-models-pytorch"]
+deep = ["torch", "torchvision", "segmentation-models-pytorch"]
 
 [tool.uv]
 package = false
+
+# This laptop has no NVIDIA GPU, so pull the CPU-only torch wheel
+# (~200 MB instead of ~2.5 GB for the CUDA build).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
