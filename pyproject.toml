@@ -1,0 +1,24 @@
+[project]
+name = "road-extraction"
+version = "0.1.0"
+description = "Road extraction from satellite imagery for OSM tracing"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "pillow",
+    "numpy",
+    "scipy",
+    "scikit-image",
+    "shapely",
+    "pyproj",
+    "rasterio",
+]
+
+# uv sync --extra validate    -> scoring against the .osm.pbf
+# uv sync --extra deep        -> PyTorch models
+[project.optional-dependencies]
+validate = ["geopandas", "pyrosm"]
+deep = ["torch", "segmentation-models-pytorch"]
+
+[tool.uv]
+package = false
