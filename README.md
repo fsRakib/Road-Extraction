@@ -92,7 +92,7 @@ uv run extract.py list
 |---|---|---|
 | `baseline` | Frangi ridge filter, no weights | works, weak - it's the floor |
 | `dlinknet` | D-LinkNet34, DeepGlobe winner | **works well**, ~7s/image on CPU - use this |
-| `unet` | U-Net resnet34, needs your own weights | template only, no weights included |
+| `unet` | Plain U-Net, Massachusetts Roads Dataset | works, but weak - trained at ~6m/px, misses BD's narrow roads |
 | `samroad` | SAM ViT-B, outputs a connected graph | needs `sam_road` repo + GPU-ish time |
 | `rngdet` | RNGDet++, transformer graph tracer | needs GPU, hours on CPU - skip for now |
 

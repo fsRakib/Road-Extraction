@@ -1,53 +1,121 @@
 """
-U-Net template (segmentation_models_pytorch).
+Plain U-Net (Ronneberger et al.) - 4-level encoder/decoder, skip connections,
+no pretrained backbone. Trained on the Massachusetts Roads Dataset.
 
-Setup:
-    pip install torch segmentation-models-pytorch
-    put your trained weights at  models/weights/unet_road.pth
+Weights: models/weights/unet_road_massachusetts.pth
+Source:  https://huggingface.co/teohyc/Satellite-Road-Segmentation-UNet
+         (checkpoint verified tensor-by-tensor against this exact class - 136
+         tensors, all keys and shapes match)
 
-Copy this file to add D-LinkNet, SAMRoad, etc. - only WEIGHTS,
-name, and the network line usually change.
+IMPORTANT - resolution mismatch, read before trusting the results
+-------------------------------------------------------------------
+The training pipeline resizes each full 1500x1500 px tile (1 m/px Massachusetts
+aerial imagery) down to 256x256 before feeding the network - i.e. every image
+the network has ever seen is effectively ~5.9 m/px, no matter how sharp the
+source photo was. That is far coarser than our 0.55 m/px Bangladesh tiles.
+
+To match that scale as closely as this pipeline's patch-based design allows,
+each 512x512 patch (0.55 m/px, ~280 m across) is resized down to 256x256
+before inference - about 1.1 m/px, still roughly 5x sharper than what the
+network was trained on. In practice this means it may see our roads as
+unusually thin and under-detect them; unlike dlinknet, this is not a strong
+model to rely on for Bangladesh imagery. See README.md.
 """
 import numpy as np
+import torch
+import torch.nn as nn
 
 import config
 from models._base import RoadModel
 
-WEIGHTS = config.WEIGHTS / "unet_road.pth"
+WEIGHTS = config.WEIGHTS / "unet_road_massachusetts.pth"
+NET_SIZE = 256   # fixed by how the checkpoint was trained
+
+
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class UNet(nn.Module):
+    def __init__(self, in_channels=3, out_channels=1):
+        super().__init__()
+        self.enc1 = ConvBlock(in_channels, 64)
+        self.enc2 = ConvBlock(64, 128)
+        self.enc3 = ConvBlock(128, 256)
+        self.enc4 = ConvBlock(256, 512)
+        self.pool = nn.MaxPool2d(2)
+
+        self.bottleneck = ConvBlock(512, 1024)
+
+        self.upconv4 = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
+        self.dec4 = ConvBlock(1024, 512)
+        self.upconv3 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
+        self.dec3 = ConvBlock(512, 256)
+        self.upconv2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.dec2 = ConvBlock(256, 128)
+        self.upconv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.dec1 = ConvBlock(128, 64)
+
+        self.conv_final = nn.Conv2d(64, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool(e1))
+        e3 = self.enc3(self.pool(e2))
+        e4 = self.enc4(self.pool(e3))
+
+        b = self.bottleneck(self.pool(e4))
+
+        d4 = self.dec4(torch.cat([self.upconv4(b), e4], dim=1))
+        d3 = self.dec3(torch.cat([self.upconv3(d4), e3], dim=1))
+        d2 = self.dec2(torch.cat([self.upconv2(d3), e2], dim=1))
+        d1 = self.dec1(torch.cat([self.upconv1(d2), e1], dim=1))
+
+        return torch.sigmoid(self.conv_final(d1))
 
 
 class UNetRoad(RoadModel):
     name = "unet"
-    description = "U-Net, resnet34 encoder"
+    description = "Plain U-Net, Massachusetts Roads Dataset (scale mismatch - see file docstring)"
 
     def load(self):
-        import torch
-        import segmentation_models_pytorch as smp
-
         if not WEIGHTS.exists():
             raise FileNotFoundError(
                 f"Missing weights: {WEIGHTS}\n"
-                "Download a road-segmentation checkpoint and save it there, "
-                "or run with --model baseline for now."
+                "Download best_road_seg_unet.pth from "
+                "https://huggingface.co/teohyc/Satellite-Road-Segmentation-UNet"
             )
-
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.net = smp.Unet("resnet34", encoder_weights=None,
-                            in_channels=3, classes=1)
-        self.net.load_state_dict(torch.load(WEIGHTS, map_location=self.device))
+        state = torch.load(WEIGHTS, map_location="cpu", weights_only=False)
+
+        self.net = UNet(in_channels=3, out_channels=1)
+        self.net.load_state_dict(state)
         self.net.to(self.device).eval()
-        self.torch = torch
         return self
 
     def predict(self, patch):
-        torch = self.torch
-        # ImageNet normalisation - the encoder was trained with it
-        mean = np.array([0.485, 0.456, 0.406], np.float32)
-        std = np.array([0.229, 0.224, 0.225], np.float32)
-        x = (patch.astype(np.float32) / 255.0 - mean) / std
-        x = torch.from_numpy(x.transpose(2, 0, 1))[None].to(self.device)
+        ph, pw = patch.shape[:2]
+        x = torch.from_numpy(patch.astype(np.float32) / 255.0)
+        x = x.permute(2, 0, 1).unsqueeze(0)                          # 1x3xHxW
+        x = torch.nn.functional.interpolate(x, size=(NET_SIZE, NET_SIZE),
+                                            mode="bilinear", align_corners=False)
+        x = x.to(self.device)
 
         with torch.no_grad():
-            logits = self.net(x)
-            prob = torch.sigmoid(logits)[0, 0].cpu().numpy()
-        return prob.astype(np.float32)
+            out = self.net(x)
+            out = torch.nn.functional.interpolate(out, size=(ph, pw),
+                                                  mode="bilinear", align_corners=False)
+        return out[0, 0].cpu().numpy().astype(np.float32)

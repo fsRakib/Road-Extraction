@@ -37,6 +37,27 @@ patches per 2048x2048 image (256 ViT-B forward passes) - built for a GPU.
 On this CPU-only laptop that is very slow, so the grid density defaults to
 6x6 (36 patches) here. Set SAMROAD_PATCHES_PER_EDGE=16 for the paper's full
 density if you have time to spare, or lower for a quicker look.
+
+OCCLUSION POST-PROCESSING (gamma correction + modified A*)
+------------------------------------------------------------
+Enabled by default, following Fathul'ibad et al. 2026 (see core/reconnect.py
+for the exact method and documented simplifications). Defaults match that
+paper's best City-scale TOPO configuration (gamma=2.0, 16m/8m), since
+City-scale's ~1 m/px, 2km tiles are the closer match to our 0.55 m/px,
+1.1km tiles - not a guaranteed match, just the more reasonable of their two
+datasets. Tune with SAMROAD_GAMMA, SAMROAD_MAX_STRAIGHT_M, or disable with
+SAMROAD_ASTAR=0.
+
+Read this before expecting much: that paper fixes OCCLUSION - a road the
+model half-sees but which is dimmed or broken by shadows/trees/buildings,
+within a domain (US/Australian cities) the model was trained on. Our
+problem on Bangladesh rural imagery, confirmed by direct measurement, was
+different: near-zero confidence almost everywhere (max 0.53, 7 pixels above
+threshold on a 4M-pixel rural tile) - the model not recognizing the roads at
+all, not seeing them dimly. Gamma correction cannot brighten a signal that
+isn't there, and A* has nothing to bridge without at least two real
+fragments to connect. Expect this to help occluded-but-detected cases (e.g.
+a road briefly hidden under canopy) more than it helps overall recall.
 """
 import os
 import sys
@@ -46,6 +67,7 @@ from pathlib import Path
 import numpy as np
 
 import config as cfg
+from core.reconnect import gamma_correct, reconnect_graph
 from models._base import RoadModel
 
 SAM_ROAD_DIR = Path(os.environ.get("SAM_ROAD_DIR", Path.home() / "sam_road"))
@@ -53,6 +75,11 @@ SAM_ROAD_CONFIG = SAM_ROAD_DIR / "config" / "toponet_vitb_512_cityscale.yaml"
 SAM_VIT_CKPT = SAM_ROAD_DIR / "sam_ckpts" / "sam_vit_b_01ec64.pth"
 ROAD_CKPT = cfg.WEIGHTS / "cityscale_vitb_512_e10.ckpt"
 PATCHES_PER_EDGE = int(os.environ.get("SAMROAD_PATCHES_PER_EDGE", "6"))
+
+GAMMA = float(os.environ.get("SAMROAD_GAMMA", "2.0"))
+ASTAR_ENABLED = os.environ.get("SAMROAD_ASTAR", "1") != "0"
+MAX_STRAIGHT_M = float(os.environ.get("SAMROAD_MAX_STRAIGHT_M", "8"))
+GSD_M_PER_PX = 0.55   # approximate ground sample distance at zoom 18 for BD latitudes
 
 
 class SAMRoad(RoadModel):
@@ -134,7 +161,14 @@ class SAMRoad(RoadModel):
         keypoint_mask = (keypoint_mask / counter * 255).to(torch.uint8).cpu().numpy()
         road_mask = (road_mask / counter * 255).to(torch.uint8).cpu().numpy()
 
-        points = self.graph_extraction.extract_graph_points(keypoint_mask, road_mask, gconfig)
+        # Step 1: gamma correction on the road mask (Fathul'ibad et al. 2026, Fig. 1) -
+        # brightens dim/occluded road pixels before graph extraction. gamma<=1 is a no-op.
+        road_mask_corrected = gamma_correct(road_mask, GAMMA)
+        if GAMMA > 1.0:
+            print(f"[samroad]   gamma correction applied (gamma={GAMMA})")
+
+        points = self.graph_extraction.extract_graph_points(
+            keypoint_mask, road_mask_corrected, gconfig)
         if points.shape[0] == 0:
             return []
 
@@ -205,10 +239,25 @@ class SAMRoad(RoadModel):
                         edge_counts[key] += 1.0
             print(f"[samroad]   pass 2/2 (topology): patch batch {bi + 1}/{n_batches}")
 
+        accepted_edges = [(a, b) for (a, b), total in edge_scores.items()
+                          if total / edge_counts[(a, b)] > gconfig.TOPO_THRESHOLD]
+
         paths = []
-        for (a, b), total in edge_scores.items():
-            if total / edge_counts[(a, b)] > gconfig.TOPO_THRESHOLD:
-                xa, ya = points[a]
-                xb, yb = points[b]
-                paths.append([(int(ya), int(xa)), (int(yb), int(xb))])
+        for a, b in accepted_edges:
+            xa, ya = points[a]
+            xb, yb = points[b]
+            paths.append([(int(ya), int(xa)), (int(yb), int(xb))])
+
+        # Step 2: modified A* reconnection (Fathul'ibad et al. 2026, Algorithm 1) -
+        # bridges dead ends / isolated points across a small window, using the
+        # gamma-corrected road mask as a cost surface. See core/reconnect.py for
+        # the exact method and the simplifications made versus the paper.
+        if ASTAR_ENABLED:
+            cost_norm = road_mask_corrected.astype(np.float32) / 255.0
+            max_straight_px = MAX_STRAIGHT_M / GSD_M_PER_PX
+            bridges = reconnect_graph(points, accepted_edges, cost_norm, max_straight_px)
+            print(f"[samroad]   A* reconnection: bridged {len(bridges)} gap(s) "
+                  f"(search radius {MAX_STRAIGHT_M}m / {max_straight_px:.0f}px)")
+            paths += bridges
+
         return paths
