@@ -13,22 +13,27 @@ Paper: https://arxiv.org/abs/2403.16051
 Repo:  https://github.com/htcr/sam_road
 
 SETUP (one time) - already done for you if you're reading this after the
-"try samroad zero-shot" run, but written out for the record:
+"try samroad zero-shot" run, but written out for the record. The sam_road
+repo lives INSIDE this project at ./sam_road (gitignored - it's someone
+else's repo plus large checkpoints, not our source):
 
-    git clone https://github.com/htcr/sam_road.git ~/sam_road
-    git clone https://github.com/htcr/segment-anything-road.git ~/sam_road/sam
+    git clone https://github.com/htcr/sam_road.git sam_road
+    git clone https://github.com/htcr/segment-anything-road.git sam_road/sam
 
-    mkdir -p ~/sam_road/sam_ckpts
-    curl -L -o ~/sam_road/sam_ckpts/sam_vit_b_01ec64.pth \\
+    mkdir -p sam_road/sam_ckpts
+    curl -L -o sam_road/sam_ckpts/sam_vit_b_01ec64.pth \\
       https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 
     curl -L -o models/weights/cityscale_vitb_512_e10.ckpt \\
       https://huggingface.co/congrui/sam_road/resolve/main/cityscale_vitb_512_e10.ckpt
 
     uv pip install lightning pytorch_lightning wandb rtree imageio \\
-                    opencv-python-headless torchmetrics addict matplotlib
+                    opencv-python-headless torchmetrics addict matplotlib \\
+                    tcod scikit-learn python-igraph networkx
 
-    export SAM_ROAD_DIR=~/sam_road
+Default location is ./sam_road (relative to the project root). Override
+with the SAM_ROAD_DIR env var if you keep your clone somewhere else (e.g.
+~/sam_road, used in earlier versions of this file).
 
 PERFORMANCE ON CPU
 -------------------
@@ -70,7 +75,7 @@ import config as cfg
 from core.reconnect import gamma_correct, reconnect_graph
 from models._base import RoadModel
 
-SAM_ROAD_DIR = Path(os.environ.get("SAM_ROAD_DIR", Path.home() / "sam_road"))
+SAM_ROAD_DIR = Path(os.environ.get("SAM_ROAD_DIR", cfg.ROOT / "sam_road"))
 SAM_ROAD_CONFIG = SAM_ROAD_DIR / "config" / "toponet_vitb_512_cityscale.yaml"
 SAM_VIT_CKPT = SAM_ROAD_DIR / "sam_ckpts" / "sam_vit_b_01ec64.pth"
 ROAD_CKPT = cfg.WEIGHTS / "cityscale_vitb_512_e10.ckpt"

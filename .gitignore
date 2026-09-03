@@ -29,6 +29,9 @@
 *.pt
 *.h5
 
+# Third-party repo cloned for SAM-Road (its own git repo, not ours - see models/samroad.py)
+/sam_road/
+
 # Common editor and OS files
 .DS_Store
 Thumbs.db
